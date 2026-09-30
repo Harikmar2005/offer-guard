@@ -1,0 +1,6 @@
+{
+  "name": "SafeIntern Check Bot",
+  "description": "AI-first explainable internship offer verification assistant with WhatsApp/Telegram interface, placement cell review dashboard, scam database cross-referencing, and institutional learning repository.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
