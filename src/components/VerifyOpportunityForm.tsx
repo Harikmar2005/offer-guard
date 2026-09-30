@@ -34,14 +34,71 @@ export const VerifyOpportunityForm: React.FC<VerifyOpportunityFormProps> = ({
   const [studentRoll, setStudentRoll] = useState('23CS084');
   const [localLoading, setLocalLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [uploadedFile, setUploadedFile] = useState<{
+    name: string;
+    mimeType: string;
+    base64: string;
+  } | null>(null);
 
   const handleQuickDemoLoad = (caseNumber: number) => {
     onSelectDemoCase(`case-demo-${caseNumber}`);
   };
 
+  const handleFileSelected = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
+      setUploadedFile({
+        name: file.name,
+        mimeType: file.type || 'application/pdf',
+        base64,
+      });
+      setInputText(`[File Attached: ${file.name} (${(file.size / 1024).toFixed(1)} KB)]\nAnalyzing via Gemini Multimodal OCR...`);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+
+    // If an actual PDF or image file was uploaded
+    if ((activeInputTab === 'letter' || activeInputTab === 'screenshot') && uploadedFile) {
+      setLocalLoading(true);
+      try {
+        const res = await fetch('/api/analyze/document', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: uploadedFile.name,
+            mimeType: uploadedFile.mimeType,
+            base64Data: uploadedFile.base64,
+            textContent: inputText.trim(),
+            studentInfo: {
+              name: studentName,
+              email: studentEmail,
+              college: studentCollege,
+              roll: studentRoll,
+            },
+          }),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || 'Failed to analyze document');
+        }
+
+        const data = await res.json();
+        onCaseAnalyzed(data.case);
+        return;
+      } catch (err: any) {
+        console.error(err);
+        setErrorMsg(err.message || 'Error occurred during document investigation.');
+        setLocalLoading(false);
+        return;
+      }
+    }
 
     let textPayload = '';
     if (activeInputTab === 'text') {
@@ -177,10 +234,10 @@ export const VerifyOpportunityForm: React.FC<VerifyOpportunityFormProps> = ({
                 </p>
                 <input
                   type="file"
-                  accept=".pdf"
+                  accept=".pdf,application/pdf"
                   onChange={(e) => {
                     if (e.target.files?.[0]) {
-                      setInputText(`[Parsed Document: ${e.target.files[0].name}]\nCandidate provisionally selected for Junior Developer Intern.\nTerms: Candidate must submit Rs. 2,000 onboarding verification fee via UPI.`);
+                      handleFileSelected(e.target.files[0]);
                     }
                   }}
                   className="mt-3 text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
@@ -208,10 +265,10 @@ export const VerifyOpportunityForm: React.FC<VerifyOpportunityFormProps> = ({
                 </p>
                 <input
                   type="file"
-                  accept="image/png, image/jpeg, image/jpg"
+                  accept="image/png, image/jpeg, image/jpg, image/webp"
                   onChange={(e) => {
                     if (e.target.files?.[0]) {
-                      setInputText(`[OCR Extracted Screenshot: ${e.target.files[0].name}]\nTelegram chat from @QuantumCloudRecruiting:\n"Transfer refundable laptop courier insurance Rs. 1,500 to laptopbond.deposit@ybl to receive MacBook."`);
+                      handleFileSelected(e.target.files[0]);
                     }
                   }}
                   className="mt-3 text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"

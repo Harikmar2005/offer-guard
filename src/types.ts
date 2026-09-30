@@ -1,14 +1,36 @@
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-export type VerificationStatus = 'VERIFIED' | 'LOW RISK' | 'MEDIUM RISK' | 'HIGH RISK' | 'CRITICAL RISK' | 'UNABLE TO VERIFY' | 'HUMAN REVIEW REQUIRED';
-export type ReviewVerdict = 'VERIFIED' | 'WARNING' | 'SCAM' | 'NEEDS MORE INFORMATION';
+export type VerificationStatus =
+  | 'VERIFIED'
+  | 'LOW RISK'
+  | 'MEDIUM RISK'
+  | 'HIGH RISK'
+  | 'CRITICAL RISK'
+  | 'UNABLE TO VERIFY'
+  | 'HUMAN REVIEW REQUIRED';
+export type ReviewVerdict =
+  | 'VERIFIED'
+  | 'WARNING'
+  | 'SCAM'
+  | 'NEEDS MORE INFORMATION'
+  | 'INCONCLUSIVE'
+  | 'REQUIRES_MORE_INFO'
+  | 'VERIFIED_LEGITIMATE';
 export type UserRole = 'STUDENT' | 'REVIEWER' | 'ADMIN';
 
 export interface EvidenceNode {
   id: string;
-  step: 'CLAIMED_COMPANY' | 'WEBSITE' | 'EMAIL_DOMAIN' | 'RECRUITER' | 'JOB_POSTING' | 'OFFER_LETTER' | 'PAYMENT_REQUEST' | 'CONSISTENCY';
+  step:
+    | 'CLAIMED_COMPANY'
+    | 'WEBSITE'
+    | 'EMAIL_DOMAIN'
+    | 'RECRUITER'
+    | 'JOB_POSTING'
+    | 'OFFER_LETTER'
+    | 'PAYMENT_REQUEST'
+    | 'CONSISTENCY';
   signal: string;
   source: string;
-  status: 'VERIFIED' | 'MISMATCH' | 'SUSPICIOUS' | 'UNVERIFIED' | 'UNAVAILABLE';
+  status: 'VERIFIED' | 'MISMATCH' | 'SUSPICIOUS' | 'UNVERIFIED' | 'UNAVAILABLE' | 'CONTRADICTORY';
   confidence: number; // 0.0 - 1.0
   explanation: string;
   impactScore: number; // positive adds to risk score
@@ -18,7 +40,14 @@ export interface EvidenceNode {
 
 export interface DetectedSignal {
   id: string;
-  category: 'FINANCIAL' | 'COMMUNICATION' | 'IDENTITY' | 'DOCUMENTS' | 'PRIVACY';
+  category:
+    | 'FINANCIAL'
+    | 'COMMUNICATION'
+    | 'IDENTITY'
+    | 'DOCUMENTS'
+    | 'PRIVACY'
+    | 'RECRUITER_DOMAIN'
+    | 'DOMAIN_REPUTATION';
   name: string;
   description: string;
   impact: number;
@@ -72,6 +101,8 @@ export interface AuditEvent {
   details: string;
 }
 
+export type AuditLogEntry = AuditEvent;
+
 export interface ReviewRecord {
   id: string;
   reviewerId: string;
@@ -84,12 +115,14 @@ export interface ReviewRecord {
   addToScamDb: boolean;
 }
 
+export type ReviewDecision = ReviewRecord;
+
 export interface CaseRecord {
   id: string;
   caseNumber: string;
   createdAt: string;
   updatedAt: string;
-  submissionType: 'text' | 'pdf' | 'screenshot' | 'url' | 'upi';
+  submissionType: 'text' | 'pdf' | 'screenshot' | 'url' | 'upi' | 'document' | 'letter';
   rawInput: string;
   studentName: string;
   studentEmail: string;
@@ -114,7 +147,13 @@ export interface CaseRecord {
 
 export interface ScamPatternEntity {
   id: string;
-  category: 'FEE_EXTORTION' | 'IMPERSONATION' | 'UNREALISTIC_STIPEND' | 'EQUIPMENT_BOND' | 'TYPOSQUAT_DOMAIN' | 'SENSITIVE_DATA_HARVEST';
+  category:
+    | 'FEE_EXTORTION'
+    | 'IMPERSONATION'
+    | 'UNREALISTIC_STIPEND'
+    | 'EQUIPMENT_BOND'
+    | 'TYPOSQUAT_DOMAIN'
+    | 'SENSITIVE_DATA_HARVEST';
   title: string;
   description: string;
   indicators: string[];

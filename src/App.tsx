@@ -39,6 +39,8 @@ export default function App() {
   >('verify');
 
   const [currentUserRole, setCurrentUserRole] = useState<UserRole>('STUDENT');
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [authUser, setAuthUser] = useState<{ id: string; name: string; email: string; role: UserRole } | null>(null);
   const [cases, setCases] = useState<CaseRecord[]>([]);
   const [activeCase, setActiveCase] = useState<CaseRecord | null>(null);
   const [scamPatterns, setScamPatterns] = useState<ScamPatternEntity[]>([]);
@@ -59,9 +61,33 @@ export default function App() {
   const [selectedReviewCase, setSelectedReviewCase] = useState<CaseRecord | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Switch demo authentication role
+  const handleSwitchRole = async (newRole: UserRole) => {
+    setCurrentUserRole(newRole);
+    if (newRole === 'REVIEWER') setCurrentTab('reviewer');
+    try {
+      const res = await fetch('/api/auth/demo-switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: newRole }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAuthToken(data.token);
+        setAuthUser(data.user);
+        localStorage.setItem('offerguard_token', data.token);
+      }
+    } catch (err) {
+      console.error('Role switch error:', err);
+    }
+  };
+
   // Fetch initial data
   const fetchData = async () => {
     try {
+      // Authenticate initial default student role
+      await handleSwitchRole('STUDENT');
+
       const [casesRes, intelRes, analyticsRes, weightsRes] = await Promise.all([
         fetch('/api/cases'),
         fetch('/api/intelligence'),
@@ -311,16 +337,23 @@ export default function App() {
             </button>
           </nav>
 
-          {/* User Role Selector (Requirement 24) */}
-          <div className="flex items-center gap-2">
+          {/* User Role & Auth Selector (Requirement 24) */}
+          <div className="flex items-center gap-3">
+            {authUser && (
+              <div className="hidden sm:flex flex-col text-right">
+                <span className="text-[11px] font-bold text-slate-800 leading-none">
+                  {authUser.name}
+                </span>
+                <span className="text-[10px] text-slate-400 font-mono mt-0.5">
+                  {authUser.email}
+                </span>
+              </div>
+            )}
             <div className="flex items-center bg-slate-100 p-0.5 rounded-lg text-[11px] font-semibold">
               {(['STUDENT', 'REVIEWER', 'ADMIN'] as const).map((r) => (
                 <button
                   key={r}
-                  onClick={() => {
-                    setCurrentUserRole(r);
-                    if (r === 'REVIEWER') setCurrentTab('reviewer');
-                  }}
+                  onClick={() => handleSwitchRole(r)}
                   className={`px-2 py-1 rounded-md transition-colors ${
                     currentUserRole === r
                       ? 'bg-white text-slate-900 shadow-xs font-bold'
