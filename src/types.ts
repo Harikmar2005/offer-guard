@@ -1,12 +1,19 @@
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type VerificationStatus =
   | 'VERIFIED'
+  | 'PARTIALLY VERIFIED'
   | 'LOW RISK'
   | 'MEDIUM RISK'
   | 'HIGH RISK'
   | 'CRITICAL RISK'
   | 'UNABLE TO VERIFY'
   | 'HUMAN REVIEW REQUIRED';
+
+export type TechnicalDomainStatus = 'EXISTS' | 'DOES_NOT_EXIST' | 'UNAVAILABLE';
+export type CompanyVerificationStatus = 'VERIFIED' | 'INCONSISTENT' | 'SUSPICIOUS' | 'UNVERIFIED' | 'UNAVAILABLE';
+export type RecruiterVerificationStatus = 'VERIFIED' | 'INCONSISTENT' | 'SUSPICIOUS' | 'UNVERIFIED' | 'UNAVAILABLE';
+export type EvidenceStatus = 'VERIFIED' | 'MISMATCH' | 'SUSPICIOUS' | 'UNVERIFIED' | 'UNAVAILABLE' | 'CONTRADICTORY';
+
 export type ReviewVerdict =
   | 'VERIFIED'
   | 'WARNING'
@@ -15,7 +22,16 @@ export type ReviewVerdict =
   | 'INCONCLUSIVE'
   | 'REQUIRES_MORE_INFO'
   | 'VERIFIED_LEGITIMATE';
+
 export type UserRole = 'STUDENT' | 'REVIEWER' | 'ADMIN';
+
+export interface ProviderResult<TStatus = string> {
+  status: TStatus;
+  confidence: number;
+  source: string;
+  evidence: string;
+  explanation: string;
+}
 
 export interface EvidenceNode {
   id: string;

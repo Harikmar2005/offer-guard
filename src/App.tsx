@@ -62,6 +62,14 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Switch demo authentication role
+  const getAuthHeaders = (customToken?: string) => {
+    const token = customToken || authToken || localStorage.getItem('offerguard_token');
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+  };
+
   const handleSwitchRole = async (newRole: UserRole) => {
     setCurrentUserRole(newRole);
     if (newRole === 'REVIEWER') setCurrentTab('reviewer');
@@ -76,6 +84,15 @@ export default function App() {
         setAuthToken(data.token);
         setAuthUser(data.user);
         localStorage.setItem('offerguard_token', data.token);
+
+        // Refresh cases with the new role token
+        const casesRes = await fetch('/api/cases', {
+          headers: { Authorization: `Bearer ${data.token}` },
+        });
+        if (casesRes.ok) {
+          const cData = await casesRes.json();
+          setCases(cData.cases || []);
+        }
       }
     } catch (err) {
       console.error('Role switch error:', err);
@@ -161,7 +178,7 @@ export default function App() {
   const handleSubmitReview = async (reviewData: any) => {
     const res = await fetch('/api/reviews', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(reviewData),
     });
 
@@ -183,7 +200,7 @@ export default function App() {
   const handleAddScamEntity = async (entity: any) => {
     const res = await fetch('/api/intelligence/entity', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(entity),
     });
     if (res.ok) {
@@ -195,7 +212,7 @@ export default function App() {
   const handleUpdateWeights = async (newWeights: ScoringWeights) => {
     const res = await fetch('/api/settings/scoring', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ scoringWeights: newWeights }),
     });
     if (res.ok) {

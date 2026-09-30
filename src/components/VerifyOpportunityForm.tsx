@@ -67,9 +67,13 @@ export const VerifyOpportunityForm: React.FC<VerifyOpportunityFormProps> = ({
     if ((activeInputTab === 'letter' || activeInputTab === 'screenshot') && uploadedFile) {
       setLocalLoading(true);
       try {
+        const token = localStorage.getItem('offerguard_token');
         const res = await fetch('/api/analyze/document', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify({
             fileName: uploadedFile.name,
             mimeType: uploadedFile.mimeType,
@@ -126,9 +130,13 @@ export const VerifyOpportunityForm: React.FC<VerifyOpportunityFormProps> = ({
 
     setLocalLoading(true);
     try {
+      const token = localStorage.getItem('offerguard_token');
       const res = await fetch('/api/analyze/text', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           text: textPayload,
           submissionType: activeInputTab,

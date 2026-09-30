@@ -18,7 +18,7 @@ import { initializeDatabase } from './database/connection';
 import { UserRepository } from './repositories/userRepository';
 import { IntelligenceRepository } from './repositories/intelligenceRepository';
 import { CaseRepository } from './repositories/caseRepository';
-import { AuthService, authenticateToken, requireRole, AuthRequest } from './services/authService';
+import { AuthService, authenticateToken, optionalAuthenticateToken, requireRole, AuthRequest } from './services/authService';
 import { VerificationService } from './services/verificationService';
 import { DocumentService } from './services/documentService';
 import { ChatbotService } from './services/chatbotService';
@@ -123,6 +123,7 @@ async function runDeterministicSecurityAnalysis(
   evidenceChain: EvidenceNode[];
   extractedFallback: Partial<ExtractedOfferDetails>;
   humanReviewRequired: boolean;
+  providerResults: any;
 }> {
   const lower = text.toLowerCase();
   const detectedSignals: DetectedSignal[] = [];
@@ -150,12 +151,24 @@ async function runDeterministicSecurityAnalysis(
     if (!isNaN(num) && num > 0) feeAmounts.push(num);
   }
 
+  // Guess company name for independent corporate verification
+  let guessedCompany = 'Target Employer';
+  if (/infosys/i.test(text)) guessedCompany = 'Infosys Limited';
+  else if (/apexcyber/i.test(text)) guessedCompany = 'ApexCyber Infotech';
+  else if (/microsoft/i.test(text)) guessedCompany = 'Microsoft India';
+  else if (/tcs|tata consultancy/i.test(text)) guessedCompany = 'Tata Consultancy Services';
+  else if (/wipro/i.test(text)) guessedCompany = 'Wipro Technologies';
+  else {
+    const compMatch = text.match(/(?:at|with|from|company:?|employer:?)\s+([A-Z][A-Za-z0-9\s&]{2,30})/i);
+    if (compMatch) guessedCompany = compMatch[1].trim();
+  }
+
   // 1. Run Real Network Verification Providers (DNS MX, Freemail, Real UPI syntax & database checks)
   const verificationPipeline = await VerificationService.runVerificationPipeline({
     extractedEmails: foundEmails,
     extractedUrls: foundUrls,
     extractedUpis: foundUpiMatches,
-    companyName: text,
+    companyName: guessedCompany,
     weights,
   });
 
@@ -305,13 +318,14 @@ async function runDeterministicSecurityAnalysis(
       contact_information: foundEmails.join(', ') || foundPhones.join(', ') || 'None provided',
     },
     humanReviewRequired,
+    providerResults: verificationPipeline.providerResults,
   };
 }
 
 // ================= API ROUTES =================
 
 // 1. POST /api/analyze/text
-app.post('/api/analyze/text', async (req: Request, res: Response) => {
+app.post('/api/analyze/text', optionalAuthenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { text, submissionType = 'text', studentInfo = {} } = req.body;
 
@@ -418,6 +432,11 @@ Return ONLY valid JSON matching this schema:
     const newCaseId = `case-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     const newCaseNumber = `OG-2026-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    const effectiveStudentName = req.user?.name || studentInfo.name || 'Aditya Krishnan';
+    const effectiveStudentEmail = req.user?.email || studentInfo.email || 'aditya.23cs@collegemail.edu';
+    const effectiveStudentCollege = req.user?.college || studentInfo.college || 'State Institute of Engineering & Technology';
+    const effectiveStudentRoll = studentInfo.roll || '23CS084';
+
     const newCase: CaseRecord = {
       id: newCaseId,
       caseNumber: newCaseNumber,
@@ -425,10 +444,10 @@ Return ONLY valid JSON matching this schema:
       updatedAt: new Date().toISOString(),
       submissionType: submissionType as any,
       rawInput: text,
-      studentName: studentInfo.name || 'Aditya Krishnan',
-      studentEmail: studentInfo.email || 'aditya.23cs@collegemail.edu',
-      studentCollege: studentInfo.college || 'State Institute of Engineering & Technology',
-      studentRoll: studentInfo.roll || '23CS084',
+      studentName: effectiveStudentName,
+      studentEmail: effectiveStudentEmail,
+      studentCollege: effectiveStudentCollege,
+      studentRoll: effectiveStudentRoll,
       extractedDetails,
       riskScore: deterministic.computedScore,
       riskLevel: deterministic.riskLevel,
@@ -447,7 +466,7 @@ Return ONLY valid JSON matching this schema:
           caseId: newCaseId,
           timestamp: new Date().toISOString(),
           actorType: 'student',
-          actorName: studentInfo.name || 'Student Applicant',
+          actorName: effectiveStudentName,
           action: 'SUBMIT_OFFER',
           details: `Submitted offer text (${text.length} chars) via OfferGuard Web Portal.`,
         },
@@ -466,7 +485,10 @@ Return ONLY valid JSON matching this schema:
 
     // Save persistently to SQLite database
     await CaseRepository.save(newCase);
-    res.status(201).json({ case: newCase });
+    res.status(201).json({
+      case: newCase,
+      provider_results: deterministic.providerResults,
+    });
   } catch (error: any) {
     console.error('Error analyzing offer:', error);
     res.status(500).json({ error: error.message || 'Internal server error analyzing offer.' });
@@ -474,7 +496,7 @@ Return ONLY valid JSON matching this schema:
 });
 
 // 2. POST /api/analyze/document (Real OCR / PDF / Image Parsing)
-app.post('/api/analyze/document', async (req: Request, res: Response) => {
+app.post('/api/analyze/document', optionalAuthenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { fileName, mimeType, base64Data, textContent, studentInfo = {} } = req.body;
 
@@ -570,6 +592,11 @@ Respond in JSON format:
     const newCaseId = `case-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     const newCaseNumber = `OG-2026-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    const effectiveStudentName = req.user?.name || studentInfo.name || 'Aditya Krishnan';
+    const effectiveStudentEmail = req.user?.email || studentInfo.email || 'aditya.23cs@collegemail.edu';
+    const effectiveStudentCollege = req.user?.college || studentInfo.college || 'State Institute of Engineering & Technology';
+    const effectiveStudentRoll = studentInfo.roll || '23CS084';
+
     const newCase: CaseRecord = {
       id: newCaseId,
       caseNumber: newCaseNumber,
@@ -577,10 +604,10 @@ Respond in JSON format:
       updatedAt: new Date().toISOString(),
       submissionType: extractionResult.sourceType === 'image' ? 'screenshot' : 'document',
       rawInput: parsedText,
-      studentName: studentInfo.name || 'Aditya Krishnan',
-      studentEmail: studentInfo.email || 'aditya.23cs@collegemail.edu',
-      studentCollege: studentInfo.college || 'State Institute of Engineering & Technology',
-      studentRoll: studentInfo.roll || '23CS084',
+      studentName: effectiveStudentName,
+      studentEmail: effectiveStudentEmail,
+      studentCollege: effectiveStudentCollege,
+      studentRoll: effectiveStudentRoll,
       extractedDetails,
       riskScore: deterministic.computedScore,
       riskLevel: deterministic.riskLevel,
@@ -599,7 +626,7 @@ Respond in JSON format:
           caseId: newCaseId,
           timestamp: new Date().toISOString(),
           actorType: 'student',
-          actorName: studentInfo.name || 'Student Applicant',
+          actorName: effectiveStudentName,
           action: 'UPLOAD_DOCUMENT',
           details: `Uploaded ${extractionResult.sourceType.toUpperCase()} document (${fileName || 'file'}). OCR extraction complete.`,
         },
@@ -617,7 +644,10 @@ Respond in JSON format:
     };
 
     await CaseRepository.save(newCase);
-    res.status(201).json({ case: newCase });
+    res.status(201).json({
+      case: newCase,
+      provider_results: deterministic.providerResults,
+    });
   } catch (error: any) {
     console.error('Error analyzing document:', error);
     res.status(500).json({ error: error.message || 'Error parsing document' });
@@ -650,10 +680,17 @@ app.post('/api/chatbot/query', async (req: Request, res: Response) => {
   }
 });
 
-// 4. GET /api/cases & GET /api/cases/:id (Persistent Database Queries)
-app.get('/api/cases', async (req: Request, res: Response) => {
+// 4. GET /api/cases & GET /api/cases/:id (Persistent Database Queries with RBAC data isolation)
+app.get('/api/cases', optionalAuthenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { risk, status, search, studentEmail } = req.query;
+    const { risk, status, search } = req.query;
+    let studentEmail = req.query.studentEmail as string | undefined;
+
+    // Enforce student role isolation: students can ONLY view their own cases
+    if (req.user && req.user.role === 'STUDENT') {
+      studentEmail = req.user.email;
+    }
+
     const cases = await CaseRepository.list({
       risk: risk as string,
       status: status as string,
@@ -666,29 +703,36 @@ app.get('/api/cases', async (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/cases/:id', async (req: Request, res: Response) => {
+app.get('/api/cases/:id', optionalAuthenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const c = await CaseRepository.findById(req.params.id);
     if (!c) {
       return res.status(404).json({ error: 'Case not found' });
     }
+
+    // If student user requests a case, ensure it belongs to them
+    if (req.user && req.user.role === 'STUDENT' && c.studentEmail !== req.user.email) {
+      return res.status(403).json({ error: 'Access denied: Students can only view their own cases.' });
+    }
+
     res.json({ case: c });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Error fetching case' });
   }
 });
 
-// 5. POST /api/reviews (Human Reviewer Decision Console with Role Validation)
-app.post('/api/reviews', async (req: Request, res: Response) => {
+// 5. POST /api/reviews (Human Reviewer Decision Console with Strict Server-Side RBAC)
+app.post('/api/reviews', authenticateToken, requireRole(['REVIEWER', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
     const {
       caseId,
       verdict,
       notes,
-      reviewerName = 'Prof. R. Venkatesh',
-      reviewerRole = 'Placement Director',
       addToScamDb = false,
     } = req.body;
+
+    const reviewerName = req.user?.name || req.body.reviewerName || 'Prof. R. Venkatesh';
+    const reviewerRole = req.user?.role === 'ADMIN' ? 'Head of Institutional Oversight' : 'Placement Director';
 
     const targetCase = await CaseRepository.findById(caseId);
     if (!targetCase) {
@@ -697,7 +741,7 @@ app.post('/api/reviews', async (req: Request, res: Response) => {
 
     const reviewRecord = {
       id: `rev-${Date.now()}`,
-      reviewerId: 'usr-reviewer-1',
+      reviewerId: req.user?.id || 'usr-reviewer-1',
       reviewerName,
       reviewerRole,
       verdict: verdict as ReviewVerdict,
@@ -780,7 +824,7 @@ app.get('/api/intelligence', async (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/intelligence/entity', async (req: Request, res: Response) => {
+app.post('/api/intelligence/entity', authenticateToken, requireRole(['REVIEWER', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
     const { type, value, claimedEntity, evidence, riskLevel = 'HIGH' } = req.body;
     if (!type || !value) {
@@ -792,7 +836,7 @@ app.post('/api/intelligence/entity', async (req: Request, res: Response) => {
       type,
       value: value.trim(),
       claimedEntity: claimedEntity || value.trim(),
-      evidence: evidence || 'Added by institutional security reviewer',
+      evidence: evidence || `Added by ${req.user?.name || 'Institutional Security Reviewer'}`,
       riskLevel: riskLevel as RiskLevel,
       dateAdded: new Date().toISOString().split('T')[0],
       matchCount: 1,
@@ -863,12 +907,12 @@ app.get('/api/analytics', async (req: Request, res: Response) => {
   }
 });
 
-// 8. GET & PUT /api/settings/scoring (Configurable Risk Engine)
+// 8. GET & PUT /api/settings/scoring (Configurable Risk Engine - Admin Only)
 app.get('/api/settings/scoring', (req: Request, res: Response) => {
   res.json({ scoringWeights: activeScoringWeights });
 });
 
-app.put('/api/settings/scoring', (req: Request, res: Response) => {
+app.put('/api/settings/scoring', authenticateToken, requireRole(['ADMIN']), (req: AuthRequest, res: Response) => {
   const { scoringWeights } = req.body;
   if (!scoringWeights) {
     return res.status(400).json({ error: 'scoringWeights object required' });

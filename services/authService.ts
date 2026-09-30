@@ -134,22 +134,10 @@ export class AuthService {
 // Authentication Middleware
 export function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : undefined;
 
   if (!token) {
-    // If no token, check if role header was provided as fallback for convenience in demo
-    const roleHeader = req.headers['x-user-role'] as UserRole;
-    if (roleHeader) {
-      req.user = {
-        id: `usr-header-${roleHeader.toLowerCase()}`,
-        email: `${roleHeader.toLowerCase()}@offerguard.edu`,
-        name: roleHeader === 'REVIEWER' ? 'Prof. R. Venkatesh' : roleHeader === 'ADMIN' ? 'System Admin' : 'Student Applicant',
-        role: roleHeader,
-        college: 'State Institute of Engineering & Technology',
-      };
-      return next();
-    }
-    return res.status(401).json({ error: 'Authentication required. Missing authorization token.' });
+    return res.status(401).json({ error: 'Authentication required. Missing authorization Bearer token.' });
   }
 
   jwt.verify(token, JWT_SECRET, (err, decodedUser) => {
@@ -157,6 +145,23 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
       return res.status(403).json({ error: 'Invalid or expired authorization token.' });
     }
     req.user = decodedUser as AuthenticatedUser;
+    next();
+  });
+}
+
+// Optional Authentication Middleware (sets req.user if valid token provided, but doesn't block)
+export function optionalAuthenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : undefined;
+
+  if (!token) {
+    return next();
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, decodedUser) => {
+    if (!err && decodedUser) {
+      req.user = decodedUser as AuthenticatedUser;
+    }
     next();
   });
 }

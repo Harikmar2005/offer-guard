@@ -1,7 +1,15 @@
 import dns from 'dns';
 import { dbGet, dbRun } from '../database/connection';
 import { IntelligenceRepository } from '../repositories/intelligenceRepository';
-import { EvidenceNode, DetectedSignal, ScoringWeights } from '../src/types';
+import {
+  EvidenceNode,
+  DetectedSignal,
+  ScoringWeights,
+  ProviderResult,
+  TechnicalDomainStatus,
+  CompanyVerificationStatus,
+  RecruiterVerificationStatus,
+} from '../src/types';
 
 // Common free/disposable mail providers that corporate recruiters should NOT use
 const FREEMAIL_DOMAINS = new Set([
@@ -47,6 +55,7 @@ const KNOWN_UPI_HANDLES = new Set([
 
 export interface DnsCheckResult {
   domain: string;
+  technicalStatus: TechnicalDomainStatus;
   hasValidMx: boolean;
   mxRecords: string[];
   hasValidA: boolean;
@@ -69,13 +78,20 @@ export interface VerificationSignalsResult {
   evidenceNodes: EvidenceNode[];
   detectedSignals: DetectedSignal[];
   scoreContribution: number;
+  providerResults: {
+    domain?: DnsCheckResult;
+    company?: ProviderResult<CompanyVerificationStatus>;
+    upi?: UpiCheckResult[];
+  };
 }
 
-export class VerificationService {
-  /**
-   * Real DNS MX & A lookup using Node.js dns.promises
-   */
-  static async checkDomainDns(domain: string): Promise<DnsCheckResult> {
+/**
+ * Technical Domain Verification Provider
+ * Strictly checks DNS A & MX resolution and evaluates protocol existence.
+ * NEVER conflates domain existence with company legitimacy.
+ */
+export class DomainVerificationProvider {
+  static async verifyDomain(domain: string): Promise<ProviderResult<TechnicalDomainStatus> & { checkResult: DnsCheckResult }> {
     const cleanDomain = domain.toLowerCase().trim().replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
     const isFreemail = FREEMAIL_DOMAINS.has(cleanDomain);
 
@@ -103,7 +119,12 @@ export class VerificationService {
       // ignore
     }
 
-    // Cache or record domain lookup in SQLite database
+    let technicalStatus: TechnicalDomainStatus = 'EXISTS';
+    if (!hasValidMx && !hasValidA) {
+      technicalStatus = error === 'ENOTFOUND' || error === 'NODATA' ? 'DOES_NOT_EXIST' : 'UNAVAILABLE';
+    }
+
+    // Persist domain check
     try {
       await dbRun(
         `INSERT OR REPLACE INTO domains (id, domain_name, mx_records_json, has_valid_mx, is_freemail, is_blacklisted, checked_at)
@@ -122,19 +143,177 @@ export class VerificationService {
       // non-fatal
     }
 
-    return {
+    const checkResult: DnsCheckResult = {
       domain: cleanDomain,
+      technicalStatus,
       hasValidMx,
       mxRecords,
       hasValidA,
       isFreemail,
       error,
     };
+
+    return {
+      status: technicalStatus,
+      confidence: technicalStatus === 'EXISTS' ? 0.95 : 0.8,
+      source: 'Network DNS Resolver',
+      evidence: `A-Record: ${hasValidA ? 'Resolves' : 'None'}, MX-Servers: ${mxRecords.length > 0 ? mxRecords.slice(0, 2).join(', ') : 'None'}`,
+      explanation: technicalStatus === 'EXISTS'
+        ? `Domain ${cleanDomain} technically resolves to active host/mail infrastructure. Note: Domain existence does not establish company legitimacy.`
+        : `Domain ${cleanDomain} could not be resolved to valid web/mail DNS records.`,
+      checkResult,
+    };
+  }
+}
+
+/**
+ * Independent Company Verification Provider
+ * Evaluates whether claimed employer identity is independently confirmed.
+ * If authoritative corporate registry check is not available, explicitly returns UNAVAILABLE.
+ * NEVER marks company as VERIFIED purely because a domain resolves.
+ */
+export class CompanyVerificationProvider {
+  static async verifyCompany(params: {
+    companyName: string;
+    domainResult?: DnsCheckResult;
+  }): Promise<ProviderResult<CompanyVerificationStatus>> {
+    const { companyName } = params;
+    const clean = companyName.trim();
+
+    if (!clean || clean.toLowerCase() === 'unspecified employer') {
+      return {
+        status: 'UNAVAILABLE',
+        confidence: 0.5,
+        source: 'Corporate Registry Directory',
+        evidence: 'No specific employer name provided in offer submission.',
+        explanation: 'Company name was omitted or unclear in the communication.',
+      };
+    }
+
+    // Check blacklist entities
+    const blacklisted = await dbGet<any>(
+      `SELECT * FROM suspicious_entities WHERE type = 'COMPANY' AND LOWER(value) = ?`,
+      [clean.toLowerCase()]
+    );
+
+    if (blacklisted) {
+      return {
+        status: 'SUSPICIOUS',
+        confidence: 0.95,
+        source: 'Campus Fraud Intelligence Registry',
+        evidence: blacklisted.evidence,
+        explanation: `Company "${clean}" matches recorded suspicious recruitment incidents in the intelligence registry.`,
+      };
+    }
+
+    // Check pre-registered verified directory (e.g. established enterprise partners)
+    const knownCompany = await dbGet<any>(
+      `SELECT * FROM companies WHERE LOWER(name) = ?`,
+      [clean.toLowerCase()]
+    );
+
+    if (knownCompany && knownCompany.registration_status === 'VERIFIED') {
+      return {
+        status: 'VERIFIED',
+        confidence: 0.95,
+        source: knownCompany.verified_source || 'Corporate Registry (MCA/BSE)',
+        evidence: `CIN: ${knownCompany.cin_number || 'Official Incorporation Verified'}`,
+        explanation: `Corporate identity independently cross-referenced with accredited corporate directory.`,
+      };
+    }
+
+    // Authoritative external registry is not connected in this runtime environment
+    return {
+      status: 'UNAVAILABLE',
+      confidence: 0.7,
+      source: 'National Corporate Registry',
+      evidence: 'Authoritative external registry query was not completed.',
+      explanation: `Independent external corporate registry verification is currently unavailable for "${clean}". Domain technical resolution does NOT prove corporate legitimacy.`,
+    };
+  }
+}
+
+/**
+ * Recruiter Identity Verification Provider
+ * Evaluates recruiter credentials, email channel, and enterprise domain alignment.
+ */
+export class RecruiterVerificationProvider {
+  static async verifyRecruiter(params: {
+    recruiterEmail?: string;
+    recruiterPhone?: string;
+    companyName: string;
+    domainResult?: DnsCheckResult;
+  }): Promise<ProviderResult<RecruiterVerificationStatus>> {
+    const { recruiterEmail, companyName, domainResult } = params;
+
+    if (!recruiterEmail) {
+      return {
+        status: 'UNAVAILABLE',
+        confidence: 0.5,
+        source: 'Recruitment Channel Analyzer',
+        evidence: 'No official recruiter email address was identified.',
+        explanation: 'Offer communication lacks verifiable recruiter contact credentials.',
+      };
+    }
+
+    const cleanEmail = recruiterEmail.trim().toLowerCase();
+    const domain = cleanEmail.split('@')[1] || '';
+
+    // Check blacklist
+    const blacklisted = await dbGet<any>(
+      `SELECT * FROM suspicious_entities WHERE type = 'EMAIL' AND LOWER(value) = ?`,
+      [cleanEmail]
+    );
+
+    if (blacklisted) {
+      return {
+        status: 'SUSPICIOUS',
+        confidence: 0.99,
+        source: 'Campus Fraud Intelligence Registry',
+        evidence: blacklisted.evidence,
+        explanation: `Recruiter email ${cleanEmail} is flagged in the placement fraud registry.`,
+      };
+    }
+
+    if (domainResult?.isFreemail || FREEMAIL_DOMAINS.has(domain)) {
+      return {
+        status: 'INCONSISTENT',
+        confidence: 0.95,
+        source: 'Enterprise Identity Analyzer',
+        evidence: `Sender uses consumer freemail (@${domain}) while claiming to represent ${companyName || 'corporate employer'}.`,
+        explanation: `Recruitment communication sent from consumer/free webmail rather than authenticated enterprise infrastructure.`,
+      };
+    }
+
+    if (domainResult && domainResult.technicalStatus === 'DOES_NOT_EXIST') {
+      return {
+        status: 'INCONSISTENT',
+        confidence: 0.98,
+        source: 'DNS Resolution Provider',
+        evidence: `Domain @${domain} has no valid MX or A records.`,
+        explanation: `Recruiter domain does not exist or cannot receive mail.`,
+      };
+    }
+
+    return {
+      status: 'UNVERIFIED',
+      confidence: 0.8,
+      source: 'Corporate Directory',
+      evidence: `Email @${domain} resolves technically, but individual recruiter credentials are not independently bound to HR roster.`,
+      explanation: `Recruiter domain is technically active, but specific individual identity remains unverified without internal directory confirmation.`,
+    };
+  }
+}
+
+/**
+ * Comprehensive Verification Service aggregating all providers
+ */
+export class VerificationService {
+  static async checkDomainDns(domain: string): Promise<DnsCheckResult> {
+    const res = await DomainVerificationProvider.verifyDomain(domain);
+    return res.checkResult;
   }
 
-  /**
-   * Check UPI format and match with database blacklist
-   */
   static async checkUpi(upiId: string): Promise<UpiCheckResult> {
     const clean = upiId.trim().toLowerCase();
     const upiRegex = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
@@ -155,7 +334,6 @@ export class VerificationService {
     if (blacklistMatches) {
       isFlaggedInBlacklist = true;
       matchedBlacklistEvidence = blacklistMatches.evidence;
-      // Increment hit counter in SQLite
       await IntelligenceRepository.incrementEntityMatch(blacklistMatches.id);
     }
 
@@ -169,9 +347,6 @@ export class VerificationService {
     };
   }
 
-  /**
-   * Run comprehensive real verification pipeline over extracted details and text
-   */
   static async runVerificationPipeline(params: {
     extractedEmails: string[];
     extractedUrls: string[];
@@ -183,14 +358,18 @@ export class VerificationService {
     const detectedSignals: DetectedSignal[] = [];
     let scoreContribution = 0;
 
-    // 1. Process Recruiter Emails & Real DNS Checks
+    // 1. Process Recruiter Emails & Domain Verification Provider
     const dnsResults: DnsCheckResult[] = [];
+    let primaryDomainResult: DnsCheckResult | undefined;
+
     for (const email of params.extractedEmails.slice(0, 2)) {
       const parts = email.split('@');
       if (parts.length === 2) {
         const domain = parts[1];
-        const dnsRes = await this.checkDomainDns(domain);
+        const domainVerify = await DomainVerificationProvider.verifyDomain(domain);
+        const dnsRes = domainVerify.checkResult;
         dnsResults.push(dnsRes);
+        if (!primaryDomainResult) primaryDomainResult = dnsRes;
 
         if (dnsRes.isFreemail) {
           scoreContribution += params.weights.recruiter_domain_mismatch;
@@ -215,8 +394,7 @@ export class VerificationService {
             impactScore: params.weights.recruiter_domain_mismatch,
             isFictionalDemoData: false,
           });
-        } else if (!dnsRes.hasValidMx) {
-          // Domain has no MX records! Fake or non-functional domain
+        } else if (dnsRes.technicalStatus === 'DOES_NOT_EXIST') {
           scoreContribution += params.weights.suspicious_domain;
           detectedSignals.push({
             id: `sig-nomx-${Date.now()}`,
@@ -240,31 +418,50 @@ export class VerificationService {
             isFictionalDemoData: false,
           });
         } else {
-          // Valid corporate MX
+          // Domain technically resolves
           evidenceNodes.push({
             id: `ev-v-mx-${Date.now()}`,
             step: 'EMAIL_DOMAIN',
             signal: email,
-            source: 'Network DNS Provider',
+            source: 'Domain Verification Provider',
             status: 'VERIFIED',
             confidence: 0.92,
-            explanation: `Domain ${domain} has active MX servers (${dnsRes.mxRecords.slice(0, 2).join(', ')}).`,
+            explanation: `Domain ${domain} technically resolves with active MX servers. Note: Technical domain validity does not prove corporate legitimacy.`,
             impactScore: 0,
             isFictionalDemoData: false,
           });
         }
+
+        // Recruiter Verification Provider
+        const recruiterVerify = await RecruiterVerificationProvider.verifyRecruiter({
+          recruiterEmail: email,
+          companyName: params.companyName,
+          domainResult: dnsRes,
+        });
+
+        evidenceNodes.push({
+          id: `ev-rec-${Date.now()}`,
+          step: 'RECRUITER',
+          signal: `Recruiter: ${email}`,
+          source: recruiterVerify.source,
+          status: recruiterVerify.status === 'INCONSISTENT' ? 'MISMATCH' : recruiterVerify.status === 'SUSPICIOUS' ? 'SUSPICIOUS' : 'UNVERIFIED',
+          confidence: recruiterVerify.confidence,
+          explanation: recruiterVerify.explanation,
+          impactScore: recruiterVerify.status === 'INCONSISTENT' ? 10 : 0,
+          isFictionalDemoData: false,
+        });
       }
     }
 
-    // 2. Process Website URL checks
+    // 2. Process Website URLs
     for (const url of params.extractedUrls.slice(0, 2)) {
       try {
         const u = new URL(url.startsWith('http') ? url : `https://${url}`);
         const domain = u.hostname;
-        const dnsRes = await this.checkDomainDns(domain);
+        const dnsVerify = await DomainVerificationProvider.verifyDomain(domain);
+        const dnsRes = dnsVerify.checkResult;
         dnsResults.push(dnsRes);
 
-        // Check suspicious TLDs
         const isSuspiciousTld = ['.xyz', '.top', '.buzz', '.work', '.click', '.tk', '.ml'].some((tld) =>
           domain.endsWith(tld)
         );
@@ -300,7 +497,7 @@ export class VerificationService {
             source: 'DNS A-Record Provider',
             status: 'VERIFIED',
             confidence: 0.85,
-            explanation: `Domain ${domain} successfully resolves to public web infrastructure.`,
+            explanation: `Domain ${domain} technically resolves to web infrastructure. Technical resolution does not establish company legitimacy.`,
             impactScore: 0,
             isFictionalDemoData: false,
           });
@@ -310,7 +507,25 @@ export class VerificationService {
       }
     }
 
-    // 3. Process UPI IDs & Blacklist
+    // 3. Independent Company Verification Provider (Crucial Phase 4 & 5 separation)
+    const compVerify = await CompanyVerificationProvider.verifyCompany({
+      companyName: params.companyName,
+      domainResult: primaryDomainResult,
+    });
+
+    evidenceNodes.unshift({
+      id: `ev-comp-${Date.now()}`,
+      step: 'CLAIMED_COMPANY',
+      signal: params.companyName || 'Target Employer',
+      source: compVerify.source,
+      status: compVerify.status === 'VERIFIED' ? 'VERIFIED' : compVerify.status === 'SUSPICIOUS' ? 'SUSPICIOUS' : 'UNAVAILABLE',
+      confidence: compVerify.confidence,
+      explanation: compVerify.explanation,
+      impactScore: compVerify.status === 'SUSPICIOUS' ? 25 : 0,
+      isFictionalDemoData: false,
+    });
+
+    // 4. Process UPI IDs & Blacklist
     const upiResults: UpiCheckResult[] = [];
     for (const upi of params.extractedUpis) {
       const upiCheck = await this.checkUpi(upi);
@@ -348,7 +563,7 @@ export class VerificationService {
           description: `Recruitment requests transfer to peer/merchant UPI handle.`,
           impact: params.weights.personal_upi,
           severity: 'critical',
-          evidence: `UPI ID: ${upi}. Direct violation of AICTE zero-fee internship regulations.`,
+          evidence: `UPI ID: ${upi}. Upfront payment requests are treated as a high-risk recruitment signal.`,
         });
 
         evidenceNodes.push({
@@ -358,7 +573,7 @@ export class VerificationService {
           source: 'Financial Signal Analyzer',
           status: 'SUSPICIOUS',
           confidence: 0.98,
-          explanation: `Personal or unverified UPI transfer demanded.`,
+          explanation: `Personal or unverified UPI transfer demanded. Upfront payment requests are treated as a high-risk recruitment signal.`,
           impactScore: params.weights.personal_upi,
           isFictionalDemoData: false,
         });
@@ -371,6 +586,11 @@ export class VerificationService {
       evidenceNodes,
       detectedSignals,
       scoreContribution,
+      providerResults: {
+        domain: primaryDomainResult,
+        company: compVerify,
+        upi: upiResults,
+      },
     };
   }
 }
