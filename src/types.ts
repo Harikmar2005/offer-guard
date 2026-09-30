@@ -1,115 +1,138 @@
-export type RiskLevel = 'GREEN' | 'AMBER' | 'RED';
+export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+export type VerificationStatus = 'VERIFIED' | 'LOW RISK' | 'MEDIUM RISK' | 'HIGH RISK' | 'CRITICAL RISK' | 'UNABLE TO VERIFY' | 'HUMAN REVIEW REQUIRED';
+export type ReviewVerdict = 'VERIFIED' | 'WARNING' | 'SCAM' | 'NEEDS MORE INFORMATION';
+export type UserRole = 'STUDENT' | 'REVIEWER' | 'ADMIN';
 
-export interface ScamEntity {
+export interface EvidenceNode {
   id: string;
-  entity_type: 'company' | 'phone' | 'email' | 'upi_id' | 'domain' | 'keyword_pattern';
-  value: string;
-  evidence: string;
-  risk_level: 'HIGH' | 'MEDIUM' | 'LOW';
-  createdBy: string;
-  dateAdded: string;
-  matchCount: number;
+  step: 'CLAIMED_COMPANY' | 'WEBSITE' | 'EMAIL_DOMAIN' | 'RECRUITER' | 'JOB_POSTING' | 'OFFER_LETTER' | 'PAYMENT_REQUEST' | 'CONSISTENCY';
+  signal: string;
+  source: string;
+  status: 'VERIFIED' | 'MISMATCH' | 'SUSPICIOUS' | 'UNVERIFIED' | 'UNAVAILABLE';
+  confidence: number; // 0.0 - 1.0
+  explanation: string;
+  impactScore: number; // positive adds to risk score
+  evidenceText?: string;
+  isFictionalDemoData?: boolean;
 }
 
-export interface RequestedFee {
-  amount: number;
-  reason: string;
-  upi_id?: string;
+export interface DetectedSignal {
+  id: string;
+  category: 'FINANCIAL' | 'COMMUNICATION' | 'IDENTITY' | 'DOCUMENTS' | 'PRIVACY';
+  name: string;
+  description: string;
+  impact: number;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  evidence: string;
+  policyRef?: string;
 }
 
 export interface ExtractedOfferDetails {
   company_name: string;
-  role_title: string;
-  stipend_amount: string;
-  salary_currency: string;
-  location: string;
   recruiter_name: string;
   recruiter_email: string;
   recruiter_phone: string;
-  upi_ids: string[];
-  requested_fees: RequestedFee[];
-  job_links: string[];
-  platforms_mentioned: string[];
-  deadlines_or_pressure: boolean;
-  internship_type: 'unpaid' | 'paid' | 'fee_based' | 'unknown';
+  job_title: string;
+  internship_type: 'unpaid' | 'paid' | 'fee_based' | 'full_time' | 'contract' | 'unknown';
+  location: string;
+  salary: string;
+  stipend: string;
+  website: string;
+  email_domain: string;
+  payment_requested: boolean;
+  payment_amount: number;
+  payment_method: string;
+  payment_reason: string;
+  requested_documents: string[];
+  deadline: string;
+  claims: string[];
+  suspicious_phrases: string[];
+  contact_information: string;
 }
 
-export interface RedFlag {
-  title: string;
-  explanation: string;
-  evidence: string;
-  severity: 'critical' | 'high' | 'medium' | 'low';
-  policy_ref?: string;
+export interface ScoringWeights {
+  registration_fee: number;
+  personal_upi: number;
+  recruiter_domain_mismatch: number;
+  company_inconsistency: number;
+  urgency_language: number;
+  sensitive_document_request: number;
+  unrealistic_salary: number;
+  suspicious_domain: number;
+  unverifiable_company: number;
 }
 
-export interface AuditLog {
+export interface AuditEvent {
   id: string;
+  caseId: string;
   timestamp: string;
-  actor_type: 'student' | 'system' | 'reviewer' | 'admin';
-  actor_name: string;
+  actorType: 'student' | 'system' | 'reviewer' | 'admin';
+  actorName: string;
   action: string;
   details: string;
 }
 
-export interface ChecklistAnswer {
-  question_id: string;
-  question_text: string;
-  student_answer: string;
-  concern_level: 'safe' | 'warning' | 'critical';
-}
-
-export interface ReviewerChecklist {
-  company_website_verified: { status: 'pass' | 'concern' | 'na'; notes: string };
-  domain_matches_official: { status: 'pass' | 'concern' | 'na'; notes: string };
-  fee_request_prohibited: { status: 'pass' | 'concern' | 'na'; notes: string };
-  official_documentation_verified: { status: 'pass' | 'concern' | 'na'; notes: string };
-  stipend_scope_reasonable: { status: 'pass' | 'concern' | 'na'; notes: string };
-}
-
-export interface ReviewerDecision {
-  verdict: 'approved_safe' | 'approved_with_reservations' | 'warn_high_risk' | 'blacklist_scam';
-  decision_summary: string;
-  reviewer_name: string;
+export interface ReviewRecord {
+  id: string;
+  reviewerId: string;
+  reviewerName: string;
+  reviewerRole: string;
+  verdict: ReviewVerdict;
+  notes: string;
+  attachedEvidenceNotes?: string;
   timestamp: string;
   addToScamDb: boolean;
 }
 
 export interface CaseRecord {
   id: string;
-  case_number: string;
-  created_at: string;
-  updated_at: string;
-  student_name: string;
-  student_roll: string;
-  student_department: string;
-  student_college: string;
-  channel: 'whatsapp' | 'telegram' | 'web_portal';
-  status: 'draft' | 'analyzed' | 'escalated_pending_review' | 'resolved_safe' | 'resolved_warned' | 'resolved_blacklisted' | 'privacy_anonymized';
-  extracted_details: ExtractedOfferDetails;
-  risk_score: number;
-  risk_level: RiskLevel;
-  red_flags: RedFlag[];
-  green_flags: string[];
-  explanation_en: string;
-  explanation_ta: string;
-  explanation_hi: string;
-  recommended_action: string;
-  raw_input_text: string;
-  attached_files?: Array<{ name: string; type: string; size: string; previewText?: string }>;
-  checklist_answers: ChecklistAnswer[];
-  reviewer_checklist?: ReviewerChecklist;
-  reviewer_decision?: ReviewerDecision;
-  audit_trail: AuditLog[];
+  caseNumber: string;
+  createdAt: string;
+  updatedAt: string;
+  submissionType: 'text' | 'pdf' | 'screenshot' | 'url' | 'upi';
+  rawInput: string;
+  studentName: string;
+  studentEmail: string;
+  studentCollege: string;
+  studentRoll: string;
+  extractedDetails: ExtractedOfferDetails;
+  riskScore: number; // 0 - 100
+  riskLevel: RiskLevel;
+  verificationStatus: VerificationStatus;
+  detectedSignals: DetectedSignal[];
+  evidenceChain: EvidenceNode[];
+  summary: string;
+  reasoning: string;
+  recommendedAction: string;
+  unverifiedInfo: string[];
+  humanReviewRequired: boolean;
+  reviewStatus: 'PENDING_REVIEW' | 'REVIEWED' | 'NOT_REQUIRED';
+  review?: ReviewRecord;
+  auditTrail: AuditEvent[];
+  isDemoCase?: boolean;
 }
 
-export interface AnalyticsMetrics {
-  totalChecks: number;
-  activeCases: number;
-  highRiskIntercepted: number;
-  amberCautionFlags: number;
-  verifiedSafeOffers: number;
-  resolvedByReviewers: number;
-  totalMoneyProtectedInr: number;
-  scamEntitiesTracked: number;
-  averageReviewTimeHours: number;
+export interface ScamPatternEntity {
+  id: string;
+  category: 'FEE_EXTORTION' | 'IMPERSONATION' | 'UNREALISTIC_STIPEND' | 'EQUIPMENT_BOND' | 'TYPOSQUAT_DOMAIN' | 'SENSITIVE_DATA_HARVEST';
+  title: string;
+  description: string;
+  indicators: string[];
+  targetAudience: string;
+  riskLevel: RiskLevel;
+  dateLogged: string;
+  reportCount: number;
+  isFictionalDemoData?: boolean;
+}
+
+export interface SuspiciousEntity {
+  id: string;
+  type: 'COMPANY' | 'RECRUITER' | 'DOMAIN' | 'UPI_ID' | 'PHONE' | 'EMAIL';
+  value: string;
+  claimedEntity?: string;
+  evidence: string;
+  riskLevel: RiskLevel;
+  dateAdded: string;
+  matchCount: number;
+  isFictionalDemoData?: boolean;
 }
